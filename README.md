@@ -72,7 +72,7 @@ ok 1 - basic tcpCat request and response # time=10ms
 - Per-request context struct (`tcp_request_t`) allocated on the heap — one per concurrent call, no global state
 - Dynamic response buffer accumulated across multiple `uv_read_cb` invocations until `UV_EOF`
 - JS Promise created with `js_create_promise`, resolved with a `js_create_arraybuffer` on `UV_EOF`, rejected with `js_create_error` on any failure
-- `js_open_handle_scope` / `js_close_handle_scope` wrapped around all async JS value creation inside libuv callbacks (required — V8 has no automatic scope in async C callbacks)
+- `js_open_handle_scope` / `js_close_handle_scope` wrapped around all async JS value creation inside libuv callbacks
 - Memory freed only inside `on_close`, which libuv calls after the handle is fully closed
 
 ### What lives in JavaScript (`index.js`)
@@ -82,7 +82,7 @@ ok 1 - basic tcpCat request and response # time=10ms
 
 ### Key design decision: no global state
 
-Each call to `tcpCat` allocates its own `tcp_request_t` and attaches it to `socket.data`. This makes concurrent calls safe — each request owns its own socket, buffer, and promise deferred independently.
+Each call to `tcpCat` allocates its own `tcp_request_t` and attaches it to `socket.data`. This makes concurrent calls safe as each request owns its own socket, buffer, and promise deferred independently.
 
 ## AI Usage Disclosure
 

@@ -88,7 +88,7 @@ Each call to `tcpCat` allocates its own `tcp_request_t` and attaches it to `sock
 
 I used an AI assistant (Gemini/Antigravity) during this exercise for the following:
 
-- **Looking up `libjs` API signatures** — specifically `js_create_promise`, `js_resolve_deferred`, `js_reject_deferred`, `js_get_env_loop`, `js_open_handle_scope`, and `js_create_arraybuffer` from [`holepunchto/libjs/include/js.h`](https://github.com/holepunchto/libjs/blob/main/include/js.h), since I was not familiar with Bare's `js_*` prefix
+- **Looking up `libjs` API signatures** : specifically `js_create_promise`, `js_resolve_deferred`, `js_reject_deferred`, `js_get_env_loop`, `js_open_handle_scope`, and `js_create_arraybuffer` from [`holepunchto/libjs/include/js.h`](https://github.com/holepunchto/libjs/blob/main/include/js.h), since I was not familiar with Bare's `js_*` prefix
 
 The following was done without AI assistance:
 - The libuv TCP flow (connect → write → read → close)

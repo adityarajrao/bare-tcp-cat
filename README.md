@@ -1,121 +1,100 @@
-# bare-addon
+# bare-tcp-cat
 
-Template repository for creating Bare native addons. For information on how to use the template, see [Creating a repository from a template](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+A native [Bare](https://github.com/nicolo-ribaudo/bare) addon that fetches data from an IP address over TCP and returns the result as a JavaScript `Buffer`. The native layer uses [libuv](https://docs.libuv.org/en/v1.x/tcp.html) for all async I/O.
+
+## API
+
+```js
+const tcpCat = require('./index')
+
+const response = await tcpCat('1.1.1.1', 80, 'GET / HTTP/1.1\r\nHost: cloudflare.com\r\nConnection: close\r\n\r\n')
+console.log(response) // <Buffer 48 54 54 50 2f 31 2e 31 ...>
+console.log(response.toString()) // HTTP/1.1 301 Moved Permanently ...
+```
 
 ## Building
 
-<https://github.com/holepunchto/bare-make> is used for compiling the native bindings in [`binding.c`](binding.c). Start by installing the tool globally:
+Install the build tool globally if you haven't already:
 
-```console
-npm i -g bare-make
+```sh
+npm install -g bare-make
 ```
 
-Next, generate the build system for compiling the bindings, optionally setting the `--debug` flag to enable debug symbols and assertions:
+Install dependencies:
 
-```console
-bare-make generate [--debug]
+```sh
+npm install
 ```
 
-This only has to be run once per repository checkout. When updating `bare-make` or your compiler toolchain it might also be necessary to regenerate the build system. To do so, run the command again with the `--no-cache` flag set to disregard the existing build system cache:
+Generate the CMake build system (only needed once per checkout):
 
-```console
-bare-make generate [--debug] --no-cache
+```sh
+bare-make generate --debug
 ```
 
-With a build system generated, the bindings can be compiled:
+Compile the native binding and link it into `prebuilds/`:
 
-```console
+```sh
 bare-make build
-```
-
-This will compile the bindings and output the resulting shared library module to the `build/` directory. To install it into the `prebuilds/` directory where the Bare addon resolution algorithm expects to find it, do:
-
-```console
-bare-make install
-```
-
-To make iteration faster during development, the shared library module can also be linked into the `prebuilds/` directory rather than copied. To do so, set the `--link` flag:
-
-```console
 bare-make install --link
 ```
 
-Prior to publishing the module, make sure that no links exist within the `prebuilds/` directory as these will not be included in the resulting package archive.
+## Testing
 
-## Publishing
-
-To publish an addon, make sure to first compile bindings for the targets you wish to support. The prebuild workflow defined in [`.github/workflows/prebuild.yml`](.github/workflows/prebuild.yml) automates this process for all [tier 1 targets](https://github.com/holepunchto/bare#platform-support) supported by Bare. The whole process can be handily orchestrated by the [GitHub CLI](https://cli.github.com). As the package version is part of the compiled bindings, make sure to first commit and push a version update:
-
-```console
-npm version <increment>
-git push
-git push --tags
-```
-
-To start the prebuild workflow for the newly pushed version, do:
-
-```console
-gh workflow run prebuild --ref <version>
-```
-
-To watch the status of the workflow run until it finishes, do:
-
-```console
-gh run watch
-```
-
-When finished, the resulting prebuilds can be downloaded to the `prebuilds/` directory by doing:
-
-```console
-gh run download --name prebuilds --dir prebuilds
-```
-
-> [!IMPORTANT]
-> You still need to manually run `npm pub` to publish the package to npm.
-
-## Dependencies
-
-Addons are rarely self-contained and most often need to pull in external native libraries. For this, <https://github.com/holepunchto/cmake-fetch> should be used. Start by installing the package as a development dependency:
-
-```console
-npm i -D cmake-fetch
-```
-
-Next, import the package in the [`CMakeLists.txt`](CMakeLists.txt) build definition:
-
-```cmake
-find_package(cmake-fetch REQUIRED PATHS node_modules/cmake-fetch)
-```
-
-This will make the `fetch_package()` function available. To fetch an external native library, such as <https://github.com/holepunchto/liburl>, add the following line _after_ the `project()` declaration in the build definition:
-
-```cmake
-fetch_package("github:holepunchto/liburl")
-```
-
-Finally, link the imported native library to the addon:
-
-```cmake
-target_link_libraries(
-  ${bare_addon}
-  PUBLIC
-    url
-)
-```
-
-## Troubleshooting
-
-### Local changes not being reflected after installation
-
-The `bare` CLI statically links built-in native addons using `link_bare_module()` in [`bare/bin/CMakeLists.txt`](https://github.com/holepunchto/bare/blob/main/bin/CMakeLists.txt). If you are working on one of those, `bare` may be loading a cached version of it.
-
-To check the current cache state, do:
+Tests run using [brittle](https://npmjs.com/brittle) under the Bare runtime.
+The test suite spins up a local TCP server so no internet connection is required.
 
 ```sh
-bare --print 'Bare.Addon.cache'
+bare test.js
 ```
 
-To bypass this issue during development, manually bump the `version` field in the `package.json` to invalidate the cache.
+Expected output:
+
+```
+TAP version 13
+
+# basic tcpCat request and response
+ok 1 - should be equal
+ok 2 - should be equal
+ok 1 - basic tcpCat request and response # time=10ms
+
+1..1
+# tests 1/1 pass
+# asserts 2/2 pass
+# ok
+```
+
+## Design Notes
+
+### What lives in C (`binding.c`)
+
+- TCP socket lifecycle via `uv_tcp_init`, `uv_tcp_connect`, `uv_write`, `uv_read_start`, `uv_close`
+- Per-request context struct (`tcp_request_t`) allocated on the heap — one per concurrent call, no global state
+- Dynamic response buffer accumulated across multiple `uv_read_cb` invocations until `UV_EOF`
+- JS Promise created with `js_create_promise`, resolved with a `js_create_arraybuffer` on `UV_EOF`, rejected with `js_create_error` on any failure
+- `js_open_handle_scope` / `js_close_handle_scope` wrapped around all async JS value creation inside libuv callbacks (required — V8 has no automatic scope in async C callbacks)
+- Memory freed only inside `on_close`, which libuv calls after the handle is fully closed
+
+### What lives in JavaScript (`index.js`)
+
+- Argument validation and the public `tcpCat(ip, port, message)` signature
+- Wrapping the resolved `ArrayBuffer` into a `Buffer` object via `Buffer.from(arrayBuffer)`
+
+### Key design decision: no global state
+
+Each call to `tcpCat` allocates its own `tcp_request_t` and attaches it to `socket.data`. This makes concurrent calls safe — each request owns its own socket, buffer, and promise deferred independently.
+
+## AI Usage Disclosure
+
+I used an AI assistant (Gemini/Antigravity) during this exercise for the following:
+
+- **Looking up `libjs` API signatures** — specifically `js_create_promise`, `js_resolve_deferred`, `js_reject_deferred`, `js_get_env_loop`, `js_open_handle_scope`, and `js_create_arraybuffer` from [`holepunchto/libjs/include/js.h`](https://github.com/holepunchto/libjs/blob/main/include/js.h), since I was not familiar with Bare's `js_*` prefix
+
+The following was done without AI assistance:
+- The libuv TCP flow (connect → write → read → close)
+- The per-request context struct design and concurrency safety reasoning
+- The test design using a local mock server and dynamic port allocation
+- Debugging the `bare-net` module resolution issue under the Bare runtime
 
 ## License
 
